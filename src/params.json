@@ -1,0 +1,13 @@
+{
+    "no" : 250,
+    "nm" : 100,
+    "ng" : 2000,
+    "lr" : 1e-4,
+    "beta1" : 0.9,
+    "beta2" : 0.999,
+    "activation_weight" : 1e-4,
+    "alpha" : 1,
+    "gen_batch_size" : 200,
+    "mom_batch_size" : 200,
+    "n_moments": 4874369
+}
