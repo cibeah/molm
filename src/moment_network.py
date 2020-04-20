@@ -102,7 +102,6 @@ class MomentNetwork(nn.Module):
     def get_moment_vector(self, x, size, weights=1e-4, detach=False):
         _, output, hidden = self.forward(x)
         
-        mean_output = output.mean()
         grad_monet = self.get_gradients(mean_output)
         grad_monet = (grad_monet / size).squeeze()
         if detach:
@@ -114,9 +113,8 @@ class MomentNetwork(nn.Module):
             dim = 1
         )
         mean_activations = activations.mean(0) * weights
-        mean_input = x.mean(0).reshape(-1)
         moments = torch.cat(
-            [grad_monet, mean_input, mean_activations],
+            [grad_monet, mean_activations],
             dim =0
         )
         
