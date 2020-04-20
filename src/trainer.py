@@ -1,5 +1,6 @@
-##TODO: ADD Timing ! 
+##TODO: dotenv instead of CAPS_PARAMS ! 
 import os
+import logging
 import time
 
 import pandas as pd
@@ -15,11 +16,20 @@ import torchvision.transforms as transforms
 from torch.nn import MSELoss
 
 
-SAVE_FOLDER = "results/images/"
+SAVE_FOLDER_IMG = "runs/run4/results/images/"
+SAVE_FOLDER_CHECKPOINTS = "runs/run4/checkpoints/"
+
+logger = logging.Logger("trainer")
+logger.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+logger.addHandler(ch)
 
 class Trainer():
     
-    def __init__(self, generator, moment_network, train_set, training_params, device=None):
+    def __init__(self, generator, moment_network, train_set, training_params, device=None, learn_moments=True):
         """
             generator: a nn.Module child class serving as a generator network
             moment_network: a nn.Module child class serving as the moment network
@@ -61,7 +71,9 @@ class Trainer():
         self.cross_entropy = F.binary_cross_entropy
         self.mse = MSELoss(reduction="sum")
 
-        self.save_path = SAVE_FOLDER
+        self.save_path_img = SAVE_FOLDER_IMG
+        self.save_path_checkpoints = SAVE_FOLDER_CHECKPOINTS
+        self.learn_moments = learn_moments
         
         #to track the evolution of generated images from a single batch of noises
         self.fixed_z = torch.randn(20, self.G.dims[0], device=self.device)
@@ -112,7 +124,7 @@ class Trainer():
 
             self.LM.append(float(LM))
             if i%50 == 0:
-                print("Moment Network Iteration {}/{}: LM: {:.6}".format(i+1, self.nm, LM.item()))
+                logger.info("Moment Network Iteration {}/{}: LM: {:.6}".format(i+1, self.nm, LM.item()))
             
             self.optimizerM.zero_grad()
             LM.backward()
@@ -171,10 +183,11 @@ class Trainer():
             torch.cuda.empty_cache()
             memory_allocated.append(torch.cuda.memory_allocated())
 
-            LG = torch.dot(true_moments - moments_gz, true_moments - moments_gz) #equivalent to dot product of difference 
+            #LG = torch.dot(true_moments - moments_gz, true_moments - moments_gz) #equivalent to dot product of difference
+            LG = self.mse(true_moments, moments_gz)
             self.LG.append(float(LG))
             if i%100 == 0:
-                print("Generator Iteration {}/{}: LG: {:.6}".format(i+1, self.ng, LG.item()))
+                logger.info("Generator Iteration {}/{}: LG: {:.6}".format(i+1, self.ng, LG.item()))
             self.optimizerG.zero_grad()
             LG.backward() 
             self.optimizerG.step()
@@ -189,39 +202,58 @@ class Trainer():
         examples = examples.reshape(-1, 3, 32, 32)
         examples = (examples +1) / 2
         grid = torchvision.utils.make_grid(examples, nrow=10) # 10 images per row
-        plt.figure(figsize=(15,15))
+        fig = plt.figure(figsize=(15,15))
         plt.imshow(np.transpose(grid, (1,2,0)))
         if save:
             plt.savefig(save_path)
         else:
             plt.show()
+        plt.close(fig)
 
     def train(self, save_images=False):
-        for i in range(self.no):
-            print("Training Moment Network...")
-            self.train_monet()
-            print("Evaluating true moments value...")
+        if not self.learn_moments:
             true_moments = self.eval_true_moments()
-            print("Training Generator")
+        
+        for i in range(self.no):
+            start = time.time()
+            if self.learn_moments:
+                logger.info("Training Moment Network...")
+                self.train_monet()
+                logger.info("Evaluating true moments value...")
+                true_moments = self.eval_true_moments()
+            logger.info("Training Generator")
             self.train_generator(true_moments)
             self.iter += 1
+            stop = time.time()
+            duration = (stop - start)/60
             
-            
-            print("Objective {}/{} : LossMonet: {:.6} LossG: {:.6}".format(i+1, self.no, self.LM[-1], self.LG[-1]))
+            if self.learn_moments:
+                logger.info("Objective {}/{} - {:.2} minutes: LossMonet: {:.6} LossG: {:.6}".format(i+1, self.no, duration, self.LM[-1], self.LG[-1]))
+            else:
+                logger.info("Objective {}/{} - {:.2} minutes: LossG: {:.6}".format(i+1, self.no, duration, self.LG[-1]))
+
             self.generate_and_display(self.fixed_z, save=save_images, 
-                                      save_path=self.save_path + "generated_molm_cifar10_iter{}.png".format(i))
+                                      save_path=self.save_path_img + "generated_molm_cifar10_iter{}.png".format(i))
             
-            if i%10 == 1:
-                print("Saving model ...")
-                save_path = "checkpoints/molm_cifar10_iter{}.pt".format(i)
-                torch.save({
+            if i%5 == 1:
+                logger.info("Saving model ...")
+                save_path_checkpoints = self.save_path_checkpoints + "molm_cifar10_iter{}.pt".format(i)
+                save_dict = {
                             'monet_state_dict': self.MoNet.state_dict(),
                             'generator_state_dict': self.G.state_dict(),
-                            'optimizerM_state_dict': self.optimizerM.state_dict(),
                             'optimizerG_state_dict': self.optimizerG.state_dict(),
                             'objective': i+1,
-                            'last_lossM': self.LM[-1],
                             'last_lossG': self.LG[-1]
-
-                            }, save_path)
+                            }
+                if self.learn_moments:
+                    save_dict["last_lossM"] = self.LM[-1]
+                    save_dict["optimizerM_state_dict"] = self.optimizerM.state_dict()
+                torch.save(save_dict, save_path_checkpoints)
             
+def get_n_params(Network):
+    n_params = 0
+    sizes = {}
+    for param_tensor in Network.state_dict():
+        sizes[param_tensor] = Network.state_dict()[param_tensor].size()
+        n_params += Network.state_dict()[param_tensor].numel()
+    return n_params, sizes

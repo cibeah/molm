@@ -56,7 +56,7 @@ if __name__ == "__main__":
     device = torch.device(device_name)
     G = Generator().to(device)
     MoNet = MomentNetwork().to(device)
-    trainer = Trainer(G, MoNet, train_set, params_dict, device)
+    trainer = Trainer(G, MoNet, train_set, params_dict, device, learn_moments=True)
     # trainer.generate_and_display(trainer.fixed_z, save=True, save_path=trainer.save_path + "generated_molm_cifar10_iter{}.png".format(1))
     trainer.train(save_images=True)
 
