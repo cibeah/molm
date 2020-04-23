@@ -15,9 +15,10 @@ import torchvision.transforms as transforms
 
 from torch.nn import MSELoss
 
+from scores import InceptionScore
 
-SAVE_FOLDER_IMG = "runs/run4/results/images/"
-SAVE_FOLDER_CHECKPOINTS = "runs/run4/checkpoints/"
+SAVE_FOLDER_IMG = "runs/run5/results/images/"
+SAVE_FOLDER_CHECKPOINTS = "runs/run5/checkpoints/"
 
 logger = logging.Logger("trainer")
 logger.setLevel(logging.INFO)
@@ -29,11 +30,13 @@ logger.addHandler(ch)
 
 class Trainer():
     
-    def __init__(self, generator, moment_network, train_set, training_params, device=None, learn_moments=True):
+    def __init__(self, generator, moment_network, train_set, training_params, device=None, 
+                learn_moments=True, scores=None):
         """
             generator: a nn.Module child class serving as a generator network
             moment_network: a nn.Module child class serving as the moment network
             loader: a training data loader
+            scores: None, or a dict of shape {'name':obj} with score object with a __call__ function that returns a score
             
             training_params: dict of training parameters with:
                 n0: number of objectives
@@ -45,6 +48,8 @@ class Trainer():
                 alpha: the norm penalty parameter
                 gen_batch_size: the batch size to train the generator
                 mom_batch_size: the batch size to train the moment network
+                eval_batch_size: the batch size to evaluate the generated
+                eval_size: total number of generated samples on which to evaluate the scores
 
         """
         self.G = generator
@@ -56,6 +61,7 @@ class Trainer():
         self.no = training_params["no"]
         self.n_moments = training_params["n_moments"]
         self.gen_batch_size =  training_params["gen_batch_size"]
+        self.eval_batch_size =  training_params["eval_batch_size"]
         
         
         lr, beta1, beta2 = self.training_params["lr"], self.training_params["beta1"], self.training_params["beta2"]
@@ -77,6 +83,9 @@ class Trainer():
         
         #to track the evolution of generated images from a single batch of noises
         self.fixed_z = torch.randn(20, self.G.dims[0], device=self.device)
+
+        #monitoring the progress of the training with the evaluation scores
+        self.scores = scores
         
     def train_monet(self):
         #reshuffle training data
@@ -210,6 +219,25 @@ class Trainer():
             plt.show()
         plt.close(fig)
 
+
+    def eval(self):
+        logger.info("Evaluating generated images with scores: {}".format(self.scores.keys()))
+        scores_dict = self.scores
+        n_loops = self.training_params["eval_size"] // self.eval_batch_size
+        results = dict(zip(scores_dict.keys(), [0]*len(scores_dict)))
+        for i in range(n_loops):
+            with torch.no_grad():
+                z = torch.randn(self.eval_batch_size, self.G.dims[0], device=self.device)
+                res = self.G(z).cpu()
+            samples = InceptionScore.preprocess(res)
+            for score in scores_dict:
+                scoring = scores_dict[score]
+                results[score] += scoring(samples)
+        for score in scores_dict:
+            results[score] /= n_loops
+        return results
+        
+
     def train(self, save_images=False):
         if not self.learn_moments:
             true_moments = self.eval_true_moments()
@@ -235,7 +263,7 @@ class Trainer():
             self.generate_and_display(self.fixed_z, save=save_images, 
                                       save_path=self.save_path_img + "generated_molm_cifar10_iter{}.png".format(i))
             
-            if i%5 == 1:
+            if i%5 == 0:
                 logger.info("Saving model ...")
                 save_path_checkpoints = self.save_path_checkpoints + "molm_cifar10_iter{}.pt".format(i)
                 save_dict = {
@@ -248,7 +276,12 @@ class Trainer():
                 if self.learn_moments:
                     save_dict["last_lossM"] = self.LM[-1]
                     save_dict["optimizerM_state_dict"] = self.optimizerM.state_dict()
+                
                 torch.save(save_dict, save_path_checkpoints)
+
+                if self.scores:
+                    scores = self.eval()
+                    print(scores)
             
 def get_n_params(Network):
     n_params = 0

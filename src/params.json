@@ -9,5 +9,7 @@
     "alpha" : 1,
     "gen_batch_size" : 200,
     "mom_batch_size" : 200,
-    "n_moments": 4871297
+    "eval_batch_size": 64,
+    "n_moments": 4871297,
+    "eval_size": 5000
 }
