@@ -102,6 +102,7 @@ class MomentNetwork(nn.Module):
     def get_moment_vector(self, x, size, weights=1e-4, detach=False):
         _, output, hidden = self.forward(x)
         
+        mean_output = output.mean()
         grad_monet = self.get_gradients(mean_output)
         grad_monet = (grad_monet / size).squeeze()
         if detach:
