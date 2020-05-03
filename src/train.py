@@ -79,7 +79,7 @@ if __name__ == "__main__":
     scores_dict = load_scores(scores, device)
     G = Generator().to(device)
     MoNet = MomentNetwork().to(device)
-    trainer = Trainer(G, MoNet, train_set, params_dict, device, learn_moments=True, scores=scores_dict)
+    trainer = Trainer(G, MoNet, train_set, params_dict, device, scores=scores_dict, tensorboard=True)
     # trainer.generate_and_display(trainer.fixed_z, save=True, save_path=trainer.save_path + "generated_molm_cifar10_iter{}.png".format(1))
     trainer.train(save_images=True)
 

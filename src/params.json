@@ -11,5 +11,6 @@
     "mom_batch_size" : 200,
     "eval_batch_size": 64,
     "n_moments": 4871297,
-    "eval_size": 5000
+    "eval_size": 5000,
+    "learn_moments": true
 }

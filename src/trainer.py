@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.utils.tensorboard import SummaryWriter
 import torchvision
 import torchvision.transforms as transforms
 
@@ -17,8 +18,9 @@ from torch.nn import MSELoss
 
 from scores import InceptionScore
 
-SAVE_FOLDER_IMG = "runs/run5/results/images/"
-SAVE_FOLDER_CHECKPOINTS = "runs/run5/checkpoints/"
+RUN_FOLDER = 'runs/run5'
+SAVE_FOLDER_IMG = RUN_FOLDER + "/results/images/"
+SAVE_FOLDER_CHECKPOINTS = RUN_FOLDER + "/checkpoints/"
 
 logger = logging.Logger("trainer")
 logger.setLevel(logging.INFO)
@@ -31,7 +33,7 @@ logger.addHandler(ch)
 class Trainer():
     
     def __init__(self, generator, moment_network, train_set, training_params, device=None, 
-                learn_moments=True, scores=None):
+                scores=None, tensorboard=False):
         """
             generator: a nn.Module child class serving as a generator network
             moment_network: a nn.Module child class serving as the moment network
@@ -59,9 +61,11 @@ class Trainer():
         self.nm = training_params["nm"]
         self.ng = training_params["ng"]
         self.no = training_params["no"]
+        self.no_obj = 0 #current objective
         self.n_moments = training_params["n_moments"]
         self.gen_batch_size =  training_params["gen_batch_size"]
         self.eval_batch_size =  training_params["eval_batch_size"]
+        self.learn_moments = training_params["learn_moments"]
         
         
         lr, beta1, beta2 = self.training_params["lr"], self.training_params["beta1"], self.training_params["beta2"]
@@ -79,14 +83,19 @@ class Trainer():
 
         self.save_path_img = SAVE_FOLDER_IMG
         self.save_path_checkpoints = SAVE_FOLDER_CHECKPOINTS
-        self.learn_moments = learn_moments
         
         #to track the evolution of generated images from a single batch of noises
         self.fixed_z = torch.randn(20, self.G.dims[0], device=self.device)
 
         #monitoring the progress of the training with the evaluation scores
         self.scores = scores
-        
+
+        #monitoring through tensorboard
+        if tensorboard:
+            comment = ''.join(['{}={} '.format(key, training_params[key]) for key in training_params])
+            self.tb = SummaryWriter(RUN_FOLDER, comment=comment)
+            self.tb.add_graph(generator, self.fixed_z)
+
     def train_monet(self):
         #reshuffle training data
         loader = iter(torch.utils.data.DataLoader(self.train_set,
@@ -130,7 +139,9 @@ class Trainer():
             LM = LM_samples + LM_gen + self.training_params["alpha"] * ((grad_norm - 1)**2)
             #LM = LM_samples + LM_gen
             #print("LM loss: {:.4}".format(float(LM)))
-
+            #Add to tensorboard
+            if self.tb:
+                    self.tb.add_scalar('LossMonet/objective_{}'.format(self.no_obj+1), float(LM), i+1)
             self.LM.append(float(LM))
             if i%50 == 0:
                 logger.info("Moment Network Iteration {}/{}: LM: {:.6}".format(i+1, self.nm, LM.item()))
@@ -194,6 +205,9 @@ class Trainer():
 
             #LG = torch.dot(true_moments - moments_gz, true_moments - moments_gz) #equivalent to dot product of difference
             LG = self.mse(true_moments, moments_gz)
+            #Add to tensorboard
+            if self.tb:
+                    self.tb.add_scalar('LossGenerator/objective_{}'.format(self.no_obj+1), float(LG), i+1)
             self.LG.append(float(LG))
             if i%100 == 0:
                 logger.info("Generator Iteration {}/{}: LG: {:.6}".format(i+1, self.ng, LG.item()))
@@ -211,6 +225,9 @@ class Trainer():
         examples = examples.reshape(-1, 3, 32, 32)
         examples = (examples +1) / 2
         grid = torchvision.utils.make_grid(examples, nrow=10) # 10 images per row
+        #Add to tensorboard
+        if self.tb:
+            self.tb.add_image('generated images', grid, self.no_obj)
         fig = plt.figure(figsize=(15,15))
         plt.imshow(np.transpose(grid, (1,2,0)))
         if save:
@@ -243,6 +260,9 @@ class Trainer():
             true_moments = self.eval_true_moments()
         
         for i in range(self.no):
+            #Track the no of objectives solved
+            self.no_obj = i
+            
             start = time.time()
             if self.learn_moments:
                 logger.info("Training Moment Network...")
@@ -281,7 +301,20 @@ class Trainer():
 
                 if self.scores:
                     scores = self.eval()
-                    print(scores)
+                    logger.info(scores)
+                    #Add to tensorboard
+                    if self.tb:
+                        for score in scores:
+                            self.tb.add_scalar('Scores/{}'.format(score), scores[score], i+1)
+
+            # Updating data on tensorboard
+            if self.tb:
+                for name, param in self.G.named_parameters():
+                    self.tb.add_histogram('generator.{}'.format(name), param, i+1)
+                    self.tb.add_histogram('generator.{}.grad'.format(name), param.grad, i+1)
+                for name, param in self.MoNet.named_parameters():
+                    self.tb.add_histogram('momentNetwork.{}'.format(name), param, i+1)
+                    self.tb.add_histogram('momentNetwork.{}.grad'.format(name), param.grad, i+1)
             
 def get_n_params(Network):
     n_params = 0
