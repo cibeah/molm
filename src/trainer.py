@@ -72,7 +72,6 @@ class Trainer():
         self.optimizerG = optim.Adam(self.G.parameters(), lr=lr, betas=(beta1, beta2))
         self.optimizerM = optim.Adam(self.MoNet.parameters(), lr=lr, betas=(beta1, beta2))
  
-        self.memory_allocated = []
         self.LM = []
         self.LG = []
         self.iter = 0
@@ -101,13 +100,7 @@ class Trainer():
         loader = iter(torch.utils.data.DataLoader(self.train_set,
                                            shuffle=True,
                                           batch_size=self.training_params["mom_batch_size"]))
-     
-        torch.cuda.empty_cache()
-        memory_allocated = []
-        
         for i in range(self.nm):
-            #Monitor GPU Mmemory
-            memory_allocated.append(torch.cuda.memory_allocated())
             batch = loader.next()
             samples, _ = batch
             samples = samples.to(self.device)
@@ -149,12 +142,9 @@ class Trainer():
             self.optimizerM.zero_grad()
             LM.backward()
             self.optimizerM.step()
-            memory_allocated.append(torch.cuda.memory_allocated())
 
             del grad_monet
             del batch
-            torch.cuda.empty_cache()
-        self.memory_allocated.append(memory_allocated)
   
     def eval_true_moments(self):
         loader = torch.utils.data.DataLoader(self.train_set,
@@ -176,13 +166,10 @@ class Trainer():
             del batch
             del samples
             del moments_b
-            torch.cuda.empty_cache()
         return moments
                                         
                                         
     def train_generator(self, true_moments): 
-        torch.cuda.empty_cache()
-        memory_allocated = []
         for i in range(self.ng):
             #moments_gz = torch.zeros(n_moments, device=self.device)  
             #print(i)
@@ -196,12 +183,8 @@ class Trainer():
             moments_gz = self.MoNet.get_moment_vector(res, self.gen_batch_size, weights = self.training_params["activation_weight"])
             #moments_gz = ((i) * moments_gz + moments_z) / (i+1)
         
-            memory_allocated.append(torch.cuda.memory_allocated())
             del z
             del res
-            
-            torch.cuda.empty_cache()
-            memory_allocated.append(torch.cuda.memory_allocated())
 
             #LG = torch.dot(true_moments - moments_gz, true_moments - moments_gz) #equivalent to dot product of difference
             LG = self.mse(true_moments, moments_gz)
@@ -216,8 +199,6 @@ class Trainer():
             self.optimizerG.step()
             
             del moments_gz
-            torch.cuda.empty_cache()
-        self.memory_allocated.append(memory_allocated)
             
     def generate_and_display(self, z, save=False, save_path=None):
         #Visualizing the generated images
