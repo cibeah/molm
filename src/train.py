@@ -32,6 +32,10 @@ parser.add_argument("--dataset", type=str, default="../data/CIFAR",
                     help="path to the training data. Defauls to ../data/CIFAR")
 parser.add_argument("--device", type=str, default = "cuda:0",
                     help="name of the device to be used for training (only one device cause we aren't rich)")
+parser.add_argument("--checkpoint", "-c", type=str,
+                    help="path to a checkpoint from which the training should resume")
+parser.add_argument("--savepath", "-s", type=str,
+                    help="path to a folder to save training checkpoint and tensorboard file")
 
 
 def load_data(dataset):
@@ -79,7 +83,12 @@ if __name__ == "__main__":
     scores_dict = load_scores(scores, device)
     G = Generator().to(device)
     MoNet = MomentNetwork().to(device)
-    trainer = Trainer(G, MoNet, train_set, params_dict, device, scores=scores_dict, tensorboard=True)
-    # trainer.generate_and_display(trainer.fixed_z, save=True, save_path=trainer.save_path + "generated_molm_cifar10_iter{}.png".format(1))
-    trainer.train(save_images=True)
+    trainer = Trainer(G, MoNet, train_set, params_dict, device, 
+                scores=scores_dict, tensorboard=True, save_folder=args.savepath)
+    
+    if args.checkpoint:
+        logger.info("\n Resuming training from checkpoint: \n {}".format(params_dict, dataset, device_name, scores))
+        trainer.train(save_images=True, from_checkpoint=args.checkpoint)
+    else:
+        trainer.train(save_images=True)
 

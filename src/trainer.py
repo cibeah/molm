@@ -18,9 +18,7 @@ from torch.nn import MSELoss
 
 from scores import InceptionScore
 
-RUN_FOLDER = 'runs/run5'
-SAVE_FOLDER_IMG = RUN_FOLDER + "/results/images/"
-SAVE_FOLDER_CHECKPOINTS = RUN_FOLDER + "/checkpoints/"
+SAVING_FREQUENCY=5
 
 logger = logging.Logger("trainer")
 logger.setLevel(logging.INFO)
@@ -33,7 +31,7 @@ logger.addHandler(ch)
 class Trainer():
     
     def __init__(self, generator, moment_network, train_set, training_params, device=None, 
-                scores=None, tensorboard=False):
+                scores=None, tensorboard=False, save_folder="runs/run"):
         """
             generator: a nn.Module child class serving as a generator network
             moment_network: a nn.Module child class serving as the moment network
@@ -52,6 +50,9 @@ class Trainer():
                 mom_batch_size: the batch size to train the moment network
                 eval_batch_size: the batch size to evaluate the generated
                 eval_size: total number of generated samples on which to evaluate the scores
+            
+            tensorboard: whether to use tensorboard to save training information
+            save_folder: root folder to save the training information
 
         """
         self.G = generator
@@ -79,20 +80,22 @@ class Trainer():
         
         self.cross_entropy = F.binary_cross_entropy
         self.mse = MSELoss(reduction="sum")
-
-        self.save_path_img = SAVE_FOLDER_IMG
-        self.save_path_checkpoints = SAVE_FOLDER_CHECKPOINTS
-        
+               
         #to track the evolution of generated images from a single batch of noises
         self.fixed_z = torch.randn(20, self.G.dims[0], device=self.device)
 
         #monitoring the progress of the training with the evaluation scores
         self.scores = scores
 
+        #saving training info
+        self.run_folder = save_folder
+        self.save_path_img =  self.run_folder + "/results/images/"
+        self.save_path_checkpoints = self.run_folder + "/checkpoints/"
+
         #monitoring through tensorboard
         if tensorboard:
             comment = ''.join(['{}={} '.format(key, training_params[key]) for key in training_params])
-            self.tb = SummaryWriter(RUN_FOLDER, comment=comment)
+            self.tb = SummaryWriter(self.run_folder, comment=comment)
             self.tb.add_graph(generator, self.fixed_z)
 
     def train_monet(self):
@@ -134,7 +137,7 @@ class Trainer():
             #print("LM loss: {:.4}".format(float(LM)))
             #Add to tensorboard
             if self.tb:
-                    self.tb.add_scalar('LossMonet/objective_{}'.format(self.no_obj+1), float(LM), i+1)
+                self.tb.add_scalar('LossMonet/objective_{}'.format(self.no_obj+1), float(LM), i+1)
             self.LM.append(float(LM))
             if i%50 == 0:
                 logger.info("Moment Network Iteration {}/{}: LM: {:.6}".format(i+1, self.nm, LM.item()))
@@ -235,12 +238,37 @@ class Trainer():
             results[score] /= n_loops
         return results
         
+    def load_from_checkpoints(self, path):
+        """
+        Loads network parameters and training info from checkpoint
+            path: path to checkpoint
+        """
+        logger.info("Loading network parameters and training info from checkpoint...")
+        checkpoint = torch.load(path)
+        self.G.load_state_dict(checkpoint['generator_state_dict'])
+        self.optimizerG.load_state_dict(checkpoint['optimizerG_state_dict'])
+        self.G.train()
+        
+        if self.learn_moments:
+            self.MoNet.load_state_dict(checkpoint['monet_state_dict'])
+            self.optimizerM.load_state_dict(checkpoint['optimizerM_state_dict'])
+            self.MoNet.train()
 
-    def train(self, save_images=False):
+        last_objective = checkpoint['objective']
+        lossG = checkpoint['last_lossG']
+        lossM = checkpoint['last_lossM']
+
+        return last_objective, lossG, lossM
+
+    def train(self, save_images=False, from_checkpoint=None):
         if not self.learn_moments:
             true_moments = self.eval_true_moments()
         
-        for i in range(self.no):
+        if from_checkpoint:
+            last_objective, lossG, lossM = self.load_from_checkpoints(from_checkpoint)
+            logger.info("Starting training from Objective: {}, lossG: {}, lossM: {}".format(last_objective, lossG, lossM))
+        
+        for i in range(last_objective, self.no):
             #Track the no of objectives solved
             self.no_obj = i
             
@@ -264,7 +292,7 @@ class Trainer():
             self.generate_and_display(self.fixed_z, save=save_images, 
                                       save_path=self.save_path_img + "generated_molm_cifar10_iter{}.png".format(i))
             
-            if i%5 == 0:
+            if i%SAVING_FREQUENCY == 0:
                 logger.info("Saving model ...")
                 save_path_checkpoints = self.save_path_checkpoints + "molm_cifar10_iter{}.pt".format(i)
                 save_dict = {
